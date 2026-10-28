@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TLD Finder</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">TLD</span>
+        <span>Finder</span>
+      </div>
+
+      <div class="stats">
+        <span id="matchingCount">0</span>
+        <span class="slash">/</span>
+        <span id="totalCount">0</span>
+      </div>
+    </header>
+
+    <main class="page">
+      <section class="controls panel">
+        <div class="field">
+          <label for="searchInput">Search TLD</label>
+          <input
+            id="searchInput"
+            type="text"
+            placeholder=".com, .shop, .ai..."
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="field price-field">
+          <div class="range-labels">
+            <span>Cheapest Registration Price</span>
+            <div class="header-values">
+              <span>Min: <strong id="minValueLabel">$0</strong></span>
+              <span>Max: <strong id="maxValueLabel">$500</strong></span>
+            </div>
+          </div>
+
+          <div class="range-row">
+            <label class="range-label" for="minPrice">Min</label>
+            <input id="minPrice" type="range" min="0" max="500" step="1" value="0" />
+          </div>
+
+          <div class="range-row">
+            <label class="range-label" for="maxPrice">Max</label>
+            <input id="maxPrice" type="range" min="0" max="500" step="1" value="500" />
+          </div>
+        </div>
+
+        <label class="toggle-row" for="hideUnavailable">
+          <input id="hideUnavailable" type="checkbox" checked />
+          <span>Hide unavailable / taken domains</span>
+        </label>
+      </section>
+
+      <section class="table-card panel">
+        <div class="table-header">
+          <h2>All TLDs</h2>
+          <span id="statusText">Loading...</span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>TLD</th>
+                <th>1 Year</th>
+                <th>Cheapest Registrar</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="tldTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
