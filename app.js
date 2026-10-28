@@ -19,17 +19,20 @@ const els = {
   statusText: document.getElementById("statusText")
 };
 
+const resultCache = new Map();
+let renderTimer = null;
+
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  }).format(value);
+  }).format(Number(value));
 }
 
 function normalizeKeyword(value) {
-  return value
+  return (value || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "")
@@ -129,20 +132,26 @@ function updateLabels() {
   els.maxValueLabel.textContent = formatCurrency(state.maxPrice);
 }
 
-function getResults() {
+function getSearchResults() {
   const keyword = normalizeKeyword(state.query) || "domain";
+  const key = `${keyword}|${state.minPrice}|${state.maxPrice}|${state.hideUnavailable}`;
 
-  const filtered = state.tlds
+  if (resultCache.has(key)) {
+    return resultCache.get(key);
+  }
+
+  const results = state.tlds
     .map((tld) => buildDomainResult(keyword, tld))
     .filter((item) => item.cheapest.price >= state.minPrice && item.cheapest.price <= state.maxPrice)
     .filter((item) => !state.hideUnavailable || item.available)
     .sort((a, b) => a.cheapest.price - b.cheapest.price || a.domain.localeCompare(b.domain));
 
-  return filtered;
+  resultCache.set(key, results);
+  return results;
 }
 
 function renderResults() {
-  const results = getResults();
+  const results = getSearchResults();
   const displayQuery = normalizeKeyword(state.query) || "domain";
 
   els.matchingCount.textContent = String(results.length);
@@ -183,14 +192,22 @@ function renderResults() {
   els.resultsBody.innerHTML = rows;
 }
 
+function scheduleRender() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(() => {
+    renderResults();
+  }, 120);
+}
+
 function bindEvents() {
   els.domainInput.addEventListener("input", (event) => {
     state.query = event.target.value;
-    renderResults();
+    scheduleRender();
   });
 
   els.minPrice.addEventListener("input", (event) => {
     const nextMin = Number(event.target.value);
+
     if (nextMin > state.maxPrice) {
       state.maxPrice = nextMin;
       els.maxPrice.value = String(nextMin);
@@ -198,11 +215,12 @@ function bindEvents() {
 
     state.minPrice = nextMin;
     updateLabels();
-    renderResults();
+    scheduleRender();
   });
 
   els.maxPrice.addEventListener("input", (event) => {
     const nextMax = Number(event.target.value);
+
     if (nextMax < state.minPrice) {
       state.minPrice = nextMax;
       els.minPrice.value = String(nextMax);
@@ -210,12 +228,12 @@ function bindEvents() {
 
     state.maxPrice = nextMax;
     updateLabels();
-    renderResults();
+    scheduleRender();
   });
 
   els.hideUnavailable.addEventListener("change", (event) => {
     state.hideUnavailable = event.target.checked;
-    renderResults();
+    scheduleRender();
   });
 }
 
@@ -225,7 +243,6 @@ async function init() {
 
   els.statusText.textContent = "Loading TLD list...";
   state.tlds = await fetchTlds();
-
   renderResults();
 }
 
