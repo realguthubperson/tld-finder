@@ -86,10 +86,7 @@ function getRegistrarPaymentMeta(paymentMethods) {
       item.toLowerCase().includes("mastercard")
     );
 
-  return {
-    hasCrypto,
-    isCardOnly
-  };
+  return { hasCrypto, isCardOnly };
 }
 
 function makeRegistrarSetForTld(tld) {
@@ -177,7 +174,9 @@ function buildFullTldList() {
     if (!unique.includes(generated)) unique.push(generated);
   }
 
-  return unique.slice(0, 3537);
+  const finalList = unique.slice(0, 3537);
+  console.log("TLD count:", finalList.length);
+  return finalList;
 }
 
 async function fetchTlds() {
@@ -357,6 +356,7 @@ async function init() {
 
   els.statusText.textContent = "Loading TLD list...";
   state.tlds = await fetchTlds();
+  console.log("Loaded TLDs:", state.tlds.length);
   renderResults();
 }
 
