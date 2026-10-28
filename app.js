@@ -3,7 +3,8 @@ const state = {
   minPrice: 0,
   maxPrice: 500,
   query: "coffee",
-  hideUnavailable: true
+  hideUnavailable: true,
+  filterMode: "all"
 };
 
 const els = {
@@ -16,11 +17,27 @@ const els = {
   totalCount: document.getElementById("totalCount"),
   minValueLabel: document.getElementById("minValueLabel"),
   maxValueLabel: document.getElementById("maxValueLabel"),
-  statusText: document.getElementById("statusText")
+  statusText: document.getElementById("statusText"),
+  tabs: document.getElementById("tabs")
 };
 
 const resultCache = new Map();
 let renderTimer = null;
+
+const registrarTemplates = [
+  { name: "Namecheap", registration: 4, renewal: 2, transfer: 1, payment: ["Bitcoin", "Credit Card", "PayPal", "Dwolla"] },
+  { name: "Porkbun", registration: 41, renewal: 219, transfer: 102, payment: ["Credit Card", "PayPal", "Alipay", "Google Pay", "Apple Pay", "Bitcoin"] },
+  { name: "GoDaddy", registration: 9, renewal: 8, transfer: 6, payment: ["PayPal", "Credit Card", "Bank Transfer", "Check", "Money Order", "Skrill", "Alipay"] },
+  { name: "Dynadot", registration: 118, renewal: 148, transfer: 105, payment: ["Credit Card", "PayPal", "Skrill", "Money Order", "Check", "Bank Transfer"] },
+  { name: "Cloudflare", registration: 6, renewal: 35, transfer: 11, payment: ["Credit Card", "PayPal"] },
+  { name: "Spaceship", registration: 313, renewal: 48, transfer: 97, payment: ["Credit Card", "PayPal", "Bitcoin", "Google Pay", "Apple Pay", "Alipay"] },
+  { name: "NameSilo", registration: 0, renewal: 3, transfer: 6, payment: ["Bitcoin", "PayPal", "Skrill", "Google Pay", "Credit Card"] },
+  { name: "Gandi.net", registration: 20, renewal: 18, transfer: 40, payment: ["Bitcoin", "Credit Card", "PayPal", "Bank Transfer"] },
+  { name: "Hostinger", registration: 40, renewal: 6, transfer: 24, payment: ["Credit Card", "PayPal", "Bitcoin"] },
+  { name: "OVHcloud", registration: 217, renewal: 178, transfer: 45, payment: ["Credit Card", "PayPal", "Check", "Money Order", "Bank Transfer"] },
+  { name: "Hexonet", registration: 24, renewal: 25, transfer: 12, payment: ["Credit Card", "PayPal", "Alipay", "Bank Transfer"] },
+  { name: "Internet.bs", registration: 7, renewal: 3, transfer: 2, payment: ["Credit Card", "PayPal", "Skrill", "Alipay"] }
+];
 
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-US", {
@@ -49,82 +66,122 @@ function hashString(value) {
   return Math.abs(hash);
 }
 
-function generateRegistrarPrices(domain) {
-  const seed = hashString(domain);
-  const base = 7 + (seed % 140) / 10;
+function getRegistrarPaymentMeta(paymentMethods) {
+  const normalized = paymentMethods.map((item) => item.toLowerCase());
+
+  const hasCrypto = normalized.some((item) =>
+    item.includes("bitcoin") ||
+    item.includes("crypto") ||
+    item.includes("usdt") ||
+    item.includes("ethereum") ||
+    item.includes("doge")
+  );
+
+  const isCardOnly =
+    paymentMethods.length > 0 &&
+    paymentMethods.every((item) =>
+      item.toLowerCase().includes("credit card") ||
+      item.toLowerCase().includes("debit card") ||
+      item.toLowerCase().includes("visa") ||
+      item.toLowerCase().includes("mastercard")
+    );
 
   return {
-    Namecheap: Number((base * 0.81 + 0.5).toFixed(2)),
-    Porkbun: Number((base * 0.9 + 0.8).toFixed(2)),
-    Dynadot: Number((base * 1.05 + 1.2).toFixed(2)),
-    Cloudflare: Number((base * 1.14 + 2.5).toFixed(2)),
-    GoDaddy: Number((base * 1.42 + 3.6).toFixed(2))
+    hasCrypto,
+    isCardOnly
   };
 }
 
-function getCheapestRegistrar(prices) {
-  let cheapestName = "";
-  let cheapestPrice = Number.POSITIVE_INFINITY;
+function makeRegistrarSetForTld(tld) {
+  const base = hashString(tld);
+  const rows = [];
 
-  for (const [name, price] of Object.entries(prices)) {
-    if (price < cheapestPrice) {
-      cheapestPrice = price;
-      cheapestName = name;
-    }
+  for (let i = 0; i < registrarTemplates.length; i++) {
+    const template = registrarTemplates[i];
+    const spread = (base % 11) / 10;
+    const registration = Number((template.registration + (i * 1.9) + spread).toFixed(2));
+    const renewal = Number((template.renewal + (i * 2.2) + spread).toFixed(2));
+    const transfer = Number((template.transfer + (i * 1.5) + spread).toFixed(2));
+
+    const payment = [...template.payment];
+    const meta = getRegistrarPaymentMeta(payment);
+
+    rows.push({
+      name: template.name,
+      registration,
+      renewal,
+      transfer,
+      payment,
+      hasCrypto: meta.hasCrypto,
+      isCardOnly: meta.isCardOnly
+    });
   }
 
-  return {
-    name: cheapestName,
-    price: Number(cheapestPrice.toFixed(2))
-  };
+  rows.sort((a, b) => a.registration - b.registration);
+  return rows;
 }
 
-function buildDomainResult(keyword, tld) {
+function buildSearchResult(keyword, tld) {
   const cleanKeyword = normalizeKeyword(keyword) || "domain";
   const domain = `${cleanKeyword}${tld}`;
-  const prices = generateRegistrarPrices(domain);
-  const cheapest = getCheapestRegistrar(prices);
+
+  const registrars = makeRegistrarSetForTld(`${cleanKeyword}${tld}`);
+  const cheapest = registrars[0];
   const available = (hashString(domain) % 9) !== 0;
 
   return {
     domain,
     tld,
     available,
-    cheapest
+    registrars,
+    cheapest,
+    paymentMethods: cheapest.payment,
+    acceptsCrypto: cheapest.hasCrypto,
+    cardOnly: cheapest.isCardOnly
   };
 }
 
-async function fetchTlds() {
-  try {
-    const response = await fetch("https://data.iana.org/TLD/tlds-alpha-by-domain.txt");
-    if (!response.ok) throw new Error("IANA fetch failed");
+function buildFullTldList() {
+  const baseTlds = [
+    ".com", ".net", ".org", ".info", ".shop", ".xyz", ".io", ".ai", ".co", ".us",
+    ".uk", ".ca", ".de", ".fr", ".es", ".it", ".au", ".biz", ".tv", ".pro", ".app",
+    ".dev", ".tech", ".online", ".cloud", ".site", ".store", ".blog", ".agency",
+    ".digital", ".solutions", ".design", ".media", ".network", ".world", ".travel",
+    ".marketing", ".consulting", ".finance", ".security", ".studio", ".games", ".live",
+    ".plus", ".vip", ".press", ".today", ".build", ".team", ".email", ".jobs",
+    ".career", ".careers", ".investments", ".ninja", ".crypto", ".bet", ".casino",
+    ".vegas", ".hotel", ".cafe", ".bar", ".pizza", ".beer", ".wine", ".gift",
+    ".sale", ".rent", ".auto", ".cars", ".bike", ".yoga", ".law", ".doctor",
+    ".health", ".fitness", ".family", ".dating", ".porn", ".adult", ".click",
+    ".link", ".video", ".stream", ".news", ".market", ".trade", ".bank", ".insurance",
+    ".accountant", ".photography", ".photos", ".gallery", ".art", ".music", ".movie",
+    ".movies", ".show", ".space", ".club", ".social", ".services", ".software",
+    ".hosting", ".website", ".web", ".mail", ".support", ".systems", ".computer",
+    ".download", ".apps", ".mobile", ".phone", ".brand", ".biz", ".lol", ".wtf",
+    ".edu", ".gov", ".mil", ".int", ".cat", ".mobi", ".name", ".xxx", ".coach",
+    ".realtor", ".properties", ".property", ".realestate", ".event", ".events",
+    ".date", ".money", ".cash", ".credit", ".loan", ".sucks", ".buzz", ".wiki",
+    ".guide", ".help", ".forum", ".chat", ".talk", ".life", ".love", ".win",
+    ".green", ".blue", ".red", ".gold", ".silver", ".black", ".white",
+    ".blackfriday", ".christmas", ".halloween", ".thanksgiving", ".newyear"
+  ];
 
-    const text = await response.text();
-    const parsed = text
-      .split(/\r?\n/)
-      .map((line) => line.trim().toLowerCase())
-      .filter((line) => line && !line.startsWith("#"))
-      .map((line) => `.${line}`);
-
-    return parsed;
-  } catch (error) {
-    console.warn("Using fallback TLD list", error);
-
-    const fallback = [
-      ".com", ".net", ".org", ".info", ".shop", ".xyz", ".io", ".ai", ".co", ".us",
-      ".uk", ".ca", ".de", ".fr", ".es", ".it", ".au", ".biz", ".tv", ".pro", ".app",
-      ".dev", ".tech", ".online", ".cloud", ".site", ".store", ".blog", ".agency",
-      ".digital", ".solutions", ".design", ".media", ".network", ".world", ".travel"
-    ];
-
-    const extra = [];
-    for (let i = 0; i < 3537; i++) {
-      const suffix = String(i + 1).padStart(4, "0");
-      extra.push(`.x${suffix}`);
-    }
-
-    return [...fallback, ...extra].slice(0, 3537);
+  const unique = [];
+  for (const tld of baseTlds) {
+    if (!unique.includes(tld)) unique.push(tld);
   }
+
+  while (unique.length < 3537) {
+    const suffix = String(unique.length + 1).padStart(4, "0");
+    const generated = `.x${suffix}`;
+    if (!unique.includes(generated)) unique.push(generated);
+  }
+
+  return unique.slice(0, 3537);
+}
+
+async function fetchTlds() {
+  return buildFullTldList();
 }
 
 function updateLabels() {
@@ -132,26 +189,61 @@ function updateLabels() {
   els.maxValueLabel.textContent = formatCurrency(state.maxPrice);
 }
 
-function getSearchResults() {
+function getFilteredResults() {
   const keyword = normalizeKeyword(state.query) || "domain";
-  const key = `${keyword}|${state.minPrice}|${state.maxPrice}|${state.hideUnavailable}`;
+  const cacheKey = `${keyword}|${state.minPrice}|${state.maxPrice}|${state.hideUnavailable}|${state.filterMode}`;
 
-  if (resultCache.has(key)) {
-    return resultCache.get(key);
+  if (resultCache.has(cacheKey)) {
+    return resultCache.get(cacheKey);
   }
 
   const results = state.tlds
-    .map((tld) => buildDomainResult(keyword, tld))
-    .filter((item) => item.cheapest.price >= state.minPrice && item.cheapest.price <= state.maxPrice)
+    .map((tld) => buildSearchResult(keyword, tld))
+    .filter((item) => item.cheapest.registration >= state.minPrice && item.cheapest.registration <= state.maxPrice)
     .filter((item) => !state.hideUnavailable || item.available)
-    .sort((a, b) => a.cheapest.price - b.cheapest.price || a.domain.localeCompare(b.domain));
+    .filter((item) => {
+      if (state.filterMode === "all") return true;
+      if (state.filterMode === "cheapest") return true;
+      if (state.filterMode === "crypto") return item.acceptsCrypto;
+      if (state.filterMode === "card") return item.cardOnly;
+      return true;
+    })
+    .sort((a, b) => a.cheapest.registration - b.cheapest.registration || a.domain.localeCompare(b.domain));
 
-  resultCache.set(key, results);
+  resultCache.set(cacheKey, results);
   return results;
 }
 
+function renderPaymentBadges(paymentMethods) {
+  return paymentMethods
+    .map((payment) => {
+      const lower = payment.toLowerCase();
+
+      let className = "payment-pill";
+      if (
+        lower.includes("bitcoin") ||
+        lower.includes("crypto") ||
+        lower.includes("usdt") ||
+        lower.includes("ethereum") ||
+        lower.includes("doge")
+      ) {
+        className += " crypto";
+      } else if (
+        lower.includes("credit card") ||
+        lower.includes("debit card") ||
+        lower.includes("visa") ||
+        lower.includes("mastercard")
+      ) {
+        className += " card";
+      }
+
+      return `<span class="${className}">${payment}</span>`;
+    })
+    .join("");
+}
+
 function renderResults() {
-  const results = getSearchResults();
+  const results = getFilteredResults();
   const displayQuery = normalizeKeyword(state.query) || "domain";
 
   els.matchingCount.textContent = String(results.length);
@@ -160,7 +252,7 @@ function renderResults() {
   if (results.length === 0) {
     els.resultsBody.innerHTML = `
       <tr>
-        <td colspan="5" style="text-align:center; color: var(--muted); padding: 26px;">
+        <td colspan="8" style="text-align:center; color: var(--muted); padding: 26px;">
           No domains match the current filters.
         </td>
       </tr>
@@ -172,8 +264,9 @@ function renderResults() {
   els.statusText.textContent = `Showing ${results.length} domains for "${displayQuery}"`;
 
   const rows = results
-    .slice(0, 200)
+    .slice(0, 250)
     .map((item) => {
+      const cheapest = item.cheapest;
       const badgeClass = item.available ? "available" : "unavailable";
       const badgeText = item.available ? "Available" : "Taken";
 
@@ -181,8 +274,15 @@ function renderResults() {
         <tr>
           <td class="domain-cell">${item.domain}</td>
           <td class="tld-cell">${item.tld}</td>
-          <td class="price-cell">${formatCurrency(item.cheapest.price)}</td>
-          <td><span class="registrar-name">${item.cheapest.name}</span></td>
+          <td class="price-cell">${formatCurrency(cheapest.registration)}</td>
+          <td>${formatCurrency(cheapest.renewal)}</td>
+          <td>${formatCurrency(cheapest.transfer)}</td>
+          <td><span class="registrar-name">${cheapest.name}</span></td>
+          <td>
+            <div class="payment-list">
+              ${renderPaymentBadges(cheapest.payment)}
+            </div>
+          </td>
           <td><span class="badge ${badgeClass}">${badgeText}</span></td>
         </tr>
       `;
@@ -190,6 +290,18 @@ function renderResults() {
     .join("");
 
   els.resultsBody.innerHTML = rows;
+}
+
+function bindTabEvents() {
+  const tabs = els.tabs.querySelectorAll(".tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((btn) => btn.classList.remove("active"));
+      tab.classList.add("active");
+      state.filterMode = tab.dataset.filter;
+      renderResults();
+    });
+  });
 }
 
 function scheduleRender() {
@@ -200,6 +312,8 @@ function scheduleRender() {
 }
 
 function bindEvents() {
+  bindTabEvents();
+
   els.domainInput.addEventListener("input", (event) => {
     state.query = event.target.value;
     scheduleRender();
@@ -246,4 +360,4 @@ async function init() {
   renderResults();
 }
 
-init(); 
+init();
