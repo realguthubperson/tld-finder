@@ -2,16 +2,16 @@ const state = {
   tlds: [],
   minPrice: 0,
   maxPrice: 500,
-  search: "",
+  query: "coffee",
   hideUnavailable: true
 };
 
 const els = {
-  searchInput: document.getElementById("searchInput"),
+  domainInput: document.getElementById("domainInput"),
   minPrice: document.getElementById("minPrice"),
   maxPrice: document.getElementById("maxPrice"),
   hideUnavailable: document.getElementById("hideUnavailable"),
-  tldTableBody: document.getElementById("tldTableBody"),
+  resultsBody: document.getElementById("resultsBody"),
   matchingCount: document.getElementById("matchingCount"),
   totalCount: document.getElementById("totalCount"),
   minValueLabel: document.getElementById("minValueLabel"),
@@ -28,6 +28,15 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+function normalizeKeyword(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 function hashString(value) {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -37,19 +46,16 @@ function hashString(value) {
   return Math.abs(hash);
 }
 
-function generateRegistrarPrices(tld) {
-  const token = tld.replace(".", "").toUpperCase();
-  const lengthFactor = token.length || 1;
-  const seed = hashString(token);
-
-  const base = 6 + (lengthFactor * 0.9) + (seed % 24) / 10;
+function generateRegistrarPrices(domain) {
+  const seed = hashString(domain);
+  const base = 7 + (seed % 140) / 10;
 
   return {
-    Namecheap: Number((base * 0.82 + 0.6).toFixed(2)),
-    Porkbun: Number((base * 0.9 + 0.9).toFixed(2)),
-    Dynadot: Number((base * 1.05 + 1.6).toFixed(2)),
-    Cloudflare: Number((base * 1.15 + 2.2).toFixed(2)),
-    GoDaddy: Number((base * 1.5 + 3.7).toFixed(2))
+    Namecheap: Number((base * 0.81 + 0.5).toFixed(2)),
+    Porkbun: Number((base * 0.9 + 0.8).toFixed(2)),
+    Dynadot: Number((base * 1.05 + 1.2).toFixed(2)),
+    Cloudflare: Number((base * 1.14 + 2.5).toFixed(2)),
+    GoDaddy: Number((base * 1.42 + 3.6).toFixed(2))
   };
 }
 
@@ -70,27 +76,25 @@ function getCheapestRegistrar(prices) {
   };
 }
 
-function buildTldData(tld) {
-  const pricing = generateRegistrarPrices(tld);
-  const cheapest = getCheapestRegistrar(pricing);
-  const available = (hashString(tld) % 13) !== 0;
+function buildDomainResult(keyword, tld) {
+  const cleanKeyword = normalizeKeyword(keyword) || "domain";
+  const domain = `${cleanKeyword}${tld}`;
+  const prices = generateRegistrarPrices(domain);
+  const cheapest = getCheapestRegistrar(prices);
+  const available = (hashString(domain) % 9) !== 0;
 
   return {
+    domain,
     tld,
     available,
-    pricing,
     cheapest
   };
 }
 
 async function fetchTlds() {
-  const url = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt";
-
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error("IANA fetch failed.");
-    }
+    const response = await fetch("https://data.iana.org/TLD/tlds-alpha-by-domain.txt");
+    if (!response.ok) throw new Error("IANA fetch failed");
 
     const text = await response.text();
     const parsed = text
@@ -101,7 +105,7 @@ async function fetchTlds() {
 
     return parsed;
   } catch (error) {
-    console.warn("Falling back to generated TLD list.", error);
+    console.warn("Using fallback TLD list", error);
 
     const fallback = [
       ".com", ".net", ".org", ".info", ".shop", ".xyz", ".io", ".ai", ".co", ".us",
@@ -125,61 +129,68 @@ function updateLabels() {
   els.maxValueLabel.textContent = formatCurrency(state.maxPrice);
 }
 
-function renderTable() {
-  const filtered = state.tlds
-    .filter((item) => item.tld.toLowerCase().includes(state.search.trim().toLowerCase()))
-    .filter((item) => !state.hideUnavailable || item.available)
-    .filter((item) => item.cheapest.price >= state.minPrice && item.cheapest.price <= state.maxPrice)
-    .sort((a, b) => a.cheapest.price - b.cheapest.price || a.tld.localeCompare(b.tld));
+function getResults() {
+  const keyword = normalizeKeyword(state.query) || "domain";
 
-  els.matchingCount.textContent = String(filtered.length);
+  const filtered = state.tlds
+    .map((tld) => buildDomainResult(keyword, tld))
+    .filter((item) => item.cheapest.price >= state.minPrice && item.cheapest.price <= state.maxPrice)
+    .filter((item) => !state.hideUnavailable || item.available)
+    .sort((a, b) => a.cheapest.price - b.cheapest.price || a.domain.localeCompare(b.domain));
+
+  return filtered;
+}
+
+function renderResults() {
+  const results = getResults();
+  const displayQuery = normalizeKeyword(state.query) || "domain";
+
+  els.matchingCount.textContent = String(results.length);
   els.totalCount.textContent = String(state.tlds.length);
 
-  if (filtered.length === 0) {
-    els.tldTableBody.innerHTML = `
+  if (results.length === 0) {
+    els.resultsBody.innerHTML = `
       <tr>
-        <td colspan="4" style="text-align:center; color: var(--muted); padding: 26px;">
-          No TLDs match the current filters.
+        <td colspan="5" style="text-align:center; color: var(--muted); padding: 26px;">
+          No domains match the current filters.
         </td>
       </tr>
     `;
-    els.statusText.textContent = "No matching domains";
+    els.statusText.textContent = `No matching domains for "${displayQuery}"`;
     return;
   }
 
-  els.statusText.textContent = `Showing ${filtered.length} of ${state.tlds.length} TLDs`;
+  els.statusText.textContent = `Showing ${results.length} domains for "${displayQuery}"`;
 
-  const rows = filtered
+  const rows = results
+    .slice(0, 200)
     .map((item) => {
       const badgeClass = item.available ? "available" : "unavailable";
       const badgeText = item.available ? "Available" : "Taken";
-      const registrar = item.cheapest.name;
 
       return `
         <tr>
+          <td class="domain-cell">${item.domain}</td>
           <td class="tld-cell">${item.tld}</td>
           <td class="price-cell">${formatCurrency(item.cheapest.price)}</td>
-          <td><span class="registrar-name">${registrar}</span></td>
-          <td>
-            <span class="badge ${badgeClass}">${badgeText}</span>
-          </td>
+          <td><span class="registrar-name">${item.cheapest.name}</span></td>
+          <td><span class="badge ${badgeClass}">${badgeText}</span></td>
         </tr>
       `;
     })
     .join("");
 
-  els.tldTableBody.innerHTML = rows;
+  els.resultsBody.innerHTML = rows;
 }
 
 function bindEvents() {
-  els.searchInput.addEventListener("input", (event) => {
-    state.search = event.target.value;
-    renderTable();
+  els.domainInput.addEventListener("input", (event) => {
+    state.query = event.target.value;
+    renderResults();
   });
 
   els.minPrice.addEventListener("input", (event) => {
     const nextMin = Number(event.target.value);
-
     if (nextMin > state.maxPrice) {
       state.maxPrice = nextMin;
       els.maxPrice.value = String(nextMin);
@@ -187,12 +198,11 @@ function bindEvents() {
 
     state.minPrice = nextMin;
     updateLabels();
-    renderTable();
+    renderResults();
   });
 
   els.maxPrice.addEventListener("input", (event) => {
     const nextMax = Number(event.target.value);
-
     if (nextMax < state.minPrice) {
       state.minPrice = nextMax;
       els.minPrice.value = String(nextMax);
@@ -200,12 +210,12 @@ function bindEvents() {
 
     state.maxPrice = nextMax;
     updateLabels();
-    renderTable();
+    renderResults();
   });
 
   els.hideUnavailable.addEventListener("change", (event) => {
     state.hideUnavailable = event.target.checked;
-    renderTable();
+    renderResults();
   });
 }
 
@@ -213,13 +223,10 @@ async function init() {
   updateLabels();
   bindEvents();
 
-  els.statusText.textContent = "Loading TLDs...";
+  els.statusText.textContent = "Loading TLD list...";
+  state.tlds = await fetchTlds();
 
-  const rawTlds = await fetchTlds();
-
-  state.tlds = rawTlds.slice(0, 3537).map(buildTldData);
-
-  renderTable();
+  renderResults();
 }
 
 init();
