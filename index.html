@@ -59,6 +59,15 @@
         </label>
       </section>
 
+      <section class="panel tabs-panel">
+        <div class="tabs" id="tabs">
+          <button class="tab active" data-filter="all">All</button>
+          <button class="tab" data-filter="cheapest">Cheapest</button>
+          <button class="tab" data-filter="crypto">Crypto</button>
+          <button class="tab" data-filter="card">Card Only</button>
+        </div>
+      </section>
+
       <section class="table-card panel">
         <div class="table-header">
           <h2>Search Results</h2>
@@ -71,8 +80,11 @@
               <tr>
                 <th>Domain</th>
                 <th>TLD</th>
-                <th>1 Year</th>
+                <th>Cheapest Reg</th>
+                <th>Renewal</th>
+                <th>Transfer</th>
                 <th>Cheapest Registrar</th>
+                <th>Payment</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -84,4 +96,4 @@
 
     <script src="app.js"></script>
   </body>
-</html> 
+</html>
