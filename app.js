@@ -246,4 +246,4 @@ async function init() {
   renderResults();
 }
 
-init();
+init(); 
